@@ -1,4 +1,5 @@
 // (C) 2022 Jai B. Shaped Technologies www.shaped.ca
+// https://github.com/Shaped/SharedDedicatedWorkerPonyfill
 // MIT license
 
 export class SharedDedicatedWorkerPonyfill {
