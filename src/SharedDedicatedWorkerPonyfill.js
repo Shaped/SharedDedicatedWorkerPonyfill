@@ -5,33 +5,44 @@
 export class SharedDedicatedWorkerPonyfill {
 	#broadcastTimeout;
 	#autoStartPort;
+	#preferBroadcast;
+	#forceDedicated;
 
-	constructor(url, opts, autoStartPort = true, forceDedicated = false) {
-		this.#broadcastTimeout = 1000;
-		this.#autoStartPort = autoStartPort;
-
-		this.url = url;
-		this.opts = opts || {};
-
-		if (!this.opts?.name)
-			this.opts.name = url;
-
-		this.mbus = new BroadcastChannel(`_sharedWorkerBus:${url}`);
-		this.mbus.url = this.url;
+	constructor(workerURL, workerOpts = {}, fillOpts = {}) {
+		if (typeof workerURL === 'undefined' || workerURL == '')
+			throw new Error(`Invalid URL for SharedDedicatedWorker`);
 
 		this.sharedWorkerSupported = "SharedWorker" in globalThis;
 
-		if (forceDedicated) this.sharedWorkerSupported = false;
+		this.#broadcastTimeout = fillOpts?.broadcastTimeout || 1000;
+		this.#preferBroadcast = (typeof fillOpts?.preferBroadcast !== 'undefined') ? fillOpts.preferBroadcast : true;
+		this.#autoStartPort = (typeof fillOpts?.autoStartPort !== 'undefined') ? fillOpts.autoStartPort : true;
+		this.#forceDedicated = (typeof fillOpts?.forceDedicated !== 'undefined') ? fillOpts.forceDedicated : false;
+
+		this.url = workerURL;
+		this.opts = workerOpts || {};
+
+		if (!this.opts?.name) this.opts.name = workerURL;
+
+		if (this.#preferBroadcast)
+			this.opts.name = `#${this.opts.name}`;
+
+		this.mbusName = `_sharedWorkerBus:${this.opts.name}`;
+
+		this.mbus = new BroadcastChannel(this.mbusName);
+		this.mbus.url = this.url;
+
+		 (this.#forceDedicated)?this.sharedWorkerSupported=false:null;
 
 		return (async()=>{
 			await this.createAttachWorker();
-			return this;
+		  return this;
 		})();
 	}
 
 	async createAttachWorker() {
 		if (this.sharedWorkerSupported) {
-			this.worker = new SharedWorker(this.url, this.opts);
+			this.worker = await new SharedWorker(this.url, this.opts);
 			(this.#autoStartPort)?this.worker.port.start():null;
 		} else {
 			try {
@@ -40,7 +51,7 @@ export class SharedDedicatedWorkerPonyfill {
 			} catch(e) {
 				if (e == 'noWorker') {
 					this.worker = new Worker(this.url, this.opts);
-					this.worker.port = this.mbus;
+					this.worker.port = this.mbus; // dedicated workers have no 'port', can send direct or use broadcast, so set port to broadcast
 					this.worker.local = true;
 				} else {
 					throw new Error("SharedDedicatedWorkerPonyfill : SharedWorkeNotSupported: error creating new Worker", e);
@@ -80,28 +91,44 @@ export class SharedDedicatedWorkerPonyfill {
 	}
 
 	postMessage(message, transfer) {
-		return (this.sharedWorkerSupported)
-		?this.worker.port.postMessage(message,transfer)
-		:(this.worker?.local)
-			?this.worker.postMessage(message, transfer)
+		(this.sharedWorkerSupported)
+		?this.port.postMessage(message, transfer)
+		:(!this.#preferBroadcast && this.worker?.local)
+			?this.port.postMessage(message, transfer)
 			:(transfer)
-				?(function(){throw new Error(`Worker not in local context; transfer impossible`)})()
-				:this.mbus.postMessage(message);
+				?(function(){throw new Error(`Worker not in local context or preferBroadcast enabled, transfer impossible!`)})()
+				:this.port.postMessage(message);
 	}
 
 	start() {
-		(this.sharedWorkerSupported)
+		(this.sharedWorkerSupported && !this.#preferBroadcast)
 		?this.worker.port.start()
 		:null;
 	}
 
 	terminate() {
 		return (this.sharedWorkerSupported)
-		?this.worker.port.close()
+		?this.port.close()
 		:this.worker.terminate();
 	}
 
 	close() { return this.terminate(); }
+
+	get _port() {
+		return (this.sharedWorkerSupported)
+		? this.worker.port
+		: (this.worker?.local)
+		? this.worker
+		: (function() { throw new Error(`Actual worker is not a SharedWorker or a local DedicatedWorker, unable to retreive underlying port`) });
+	}
+
+	get port() {
+		return (this.#preferBroadcast)
+		?this.mbus
+		:(this.worker?.local)
+			?this.worker
+			:this.worker.port;
+	}
 
 	get onmessage() { return this.worker.port.onmessage; }
 	set onmessage(_) { this.worker.port.onmessage = _; }
@@ -109,18 +136,16 @@ export class SharedDedicatedWorkerPonyfill {
 	get onmessageerror() { return this.worker.port.onmessageerror; }
 	set onmessageerror(_) {	this.worker.port.onmessageerror = _; }
 
-	get port() { return this.worker.port; }
+	get onerror() { return this.worker.port.onerror; }
+	set onerror(_) { this.worker.port.onerror = _; }
 
-	get onerror() { return this.worker.onerror; }
-	set onerror(_) { this.worker.onerror = _; }
-
-	dispatchEvent(_) { return this.worker.dispatchEvent(_); }
+	dispatchEvent(_) { return this.worker.port.dispatchEvent(_); }
 
 	addEventListener(type, listener, options) {
-		return this.worker.port.addEventListener(type, listener, options);
+		return this.port.addEventListener(type, listener, options);
 	}
 
 	removeEventListener(type, listener, options) {
-		return this.worker.port.removeEventListener(type, listener, options);
+		return this.port.removeEventListener(type, listener, options);
 	}
 }

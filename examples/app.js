@@ -6,8 +6,11 @@ class myApp {
 
 		return (async()=>{
 			let { SharedDedicatedWorkerPonyfill : SharedDedicatedWorker } = await import(`../src/SharedDedicatedWorkerPonyfill.js`);
-			this.myWorker = await new SharedDedicatedWorker(`./sharedDedicatedWorker.js`);
 		})();
+	}
+
+	async initialize() {
+		this.myWorker = await new SharedDedicatedWorker(`./sharedDedicatedWorker.js`);
 	}
 
 	doSomeStuff() {

@@ -13,53 +13,84 @@
  SharedWorker.
 */
 
-class sharedDedicatedWorker {
+class sharedWorker {
+	#preferBroadcast;
+
 	constructor(port) {
+		this.#preferBroadcast = (self.name.startsWith(`#`))?true:false;
+
 		this.mbus = new BroadcastChannel(`_sharedWorkerBus:${self.name}`);
 		this.mbus.addEventListener('message', this.mbusHandler.bind(this));
 
-		if ("DedicatedWorkerGlobalScope" in self) {
-			// use mbus
-			this.port = this.mbus;
-		} else {
-			// use port; should probably default to mbus here too w/port only if needed?
-			this.port = port;
-			this.port.start();
+		console.log('[Worker] Worker has Started; these messages sometimes gets duplicated!');
+		console.log('[Worker] Another Message that may get duplicated');
+
+		if ("SharedWorkerGlobalScope" in self) {
+			this._port = port;
+			this._port.start();
 		}
 
-		this.port.addEventListener('message', this.messageHandler.bind(this));
+		if ("SharedWorkerGlobalScope" in self) {
+			this._port.addEventListener('message', this.portHandler.bind(this));
+		} else {
+			self.addEventListener('message', this.directHandler.bind(this));
+		}
+
+		console.log('[Worker] ANother message that may get duped: Maybe more likely with more messages?');
 
 		setTimeout(()=>{
-			this.port.postMessage({
-				x:'📣',
-				url:self.name
-			});
-		},1000);
+			// this only gets sent once even when console messages duplicate,
+			// thus probably not calling code twice.
+			this.port.postMessage({x:'test'});
+		},2500);
+	}
+
+	get port() {
+		if (this.#preferBroadcast)
+			return this.mbus;
+		else {
+			if ("DedicatedWorkerGlobalScope" in self)
+				return self;
+			else
+				return this._port;
+		}
+	}
+
+	directHandler(ev) {
+		this.messageHandler(ev, 'direct');
+	}
+
+	portHandler(ev) {
+		this.messageHandler(ev, 'port');
 	}
 
 	mbusHandler(ev) {
-		switch (ev.data.x) {
-			case '🔔':
-				// a context has sent a message seeking whether a worker is already running, we must reply or a new one will be spawned in that context!
-				this.mbus.postMessage({
-					x:'🔔',
-					url: self.name
-				});
-			  break;
-			default:
-				this.messageHandler(ev);
+		if (ev.data?.x) {
+			switch (ev.data.x) {
+				case '🔔':
+					console.log(`[SHWK] ${self.name} Responding to the Call!`,ev);
+					this.mbus.postMessage({
+						x:'🔔',
+						url: self.name
+					});
+				  break;
+				case '📡': this.#preferBroadcast = true;
+				  break;
+				default: this.messageHandler(ev, 'broadcast');
+			}
+		} else {
+			this.messageHandler(ev, 'broadcast');
 		}
 	}
 
-	messageHandler(ev) {
-		console.log(`your Message Handler goes Here`)
-		console.log(ev.data);
-		this.port.postMessage('bar');
+	messageHandler(ev, type) {
+		console.log(`[worker] msgHandler received ${type} message`, ev.data);
+		this.port.postMessage({x:'foobar', original:ev.data});
 	}
 }
 
 const startWorker = (port) => {
-	if (!self?.workerInstance) self.workerInstance = new sharedDedicatedWorker(port);
+	if (!self?.workerInstance) self.workerInstance = new sharedWorker(port);
 };
 
 self.onconnect = (e) => {
